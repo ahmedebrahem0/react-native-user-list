@@ -1,5 +1,5 @@
 import { Provider } from 'react-redux';
-import { store } from './store/store';
+import { store } from './src/store/store';
 import {
   SafeAreaView,
   StatusBar,
@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import UserList from './features/users/components/UserList';
+import UserList from './src/features/users/components/UserList';
 
 const App = () => {
   return (
