@@ -1,27 +1,60 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import {
-  View,
+  Pressable,
   Text,
   StyleSheet,
-  AccessibilityInfo,
+  View,
 } from 'react-native';
 import type { TransformedUser } from '../types';
+import { getAvatarColor } from '../utils/avatar';
 
 interface UserCardProps {
   user: TransformedUser;
+  searchQuery: string;
+  onPress: (userId: number) => void;
 }
 
-const UserCard = memo(({ user }: UserCardProps) => {
+const renderHighlightedName = (name: string, searchQuery: string) => {
+  const trimmedQuery = searchQuery.trim();
+
+  if (!trimmedQuery) {
+    return <Text style={styles.name}>{name}</Text>;
+  }
+
+  const normalizedName = name.toLowerCase();
+  const normalizedQuery = trimmedQuery.toLowerCase();
+  const matchIndex = normalizedName.indexOf(normalizedQuery);
+
+  if (matchIndex === -1) {
+    return <Text style={styles.name}>{name}</Text>;
+  }
+
+  const before = name.slice(0, matchIndex);
+  const match = name.slice(matchIndex, matchIndex + trimmedQuery.length);
+  const after = name.slice(matchIndex + trimmedQuery.length);
+
   return (
-    <View
+    <Text style={styles.name} numberOfLines={1} accessibilityRole="text">
+      {before}
+      <Text style={styles.highlight}>{match}</Text>
+      {after}
+    </Text>
+  );
+};
+
+const UserCard = memo(({ user, searchQuery, onPress }: UserCardProps) => {
+  const avatarColor = useMemo(() => getAvatarColor(user.id), [user.id]);
+
+  return (
+    <Pressable
       style={styles.card}
-      accessible={true}
-      accessibilityRole="text"
-      accessibilityLabel={`User: ${user.name}, Email: ${user.email}, Address: ${user.formattedAddress}`}
+      onPress={() => onPress(user.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`Open details for ${user.name}`}
+      accessibilityHint="Shows the full user profile"
     >
-      {/* Avatar */}
       <View
-        style={styles.avatar}
+        style={[styles.avatar, { backgroundColor: avatarColor }]}
         accessibilityElementsHidden={true}
         importantForAccessibility="no-hide-descendants"
       >
@@ -30,15 +63,8 @@ const UserCard = memo(({ user }: UserCardProps) => {
         </Text>
       </View>
 
-      {/* Content */}
       <View style={styles.content}>
-        <Text
-          style={styles.name}
-          numberOfLines={1}
-          accessibilityRole="text"
-        >
-          {user.name}
-        </Text>
+        {renderHighlightedName(user.name, searchQuery)}
 
         <Text
           style={styles.email}
@@ -56,7 +82,7 @@ const UserCard = memo(({ user }: UserCardProps) => {
           {user.formattedAddress}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 });
 
@@ -83,7 +109,6 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#3b82f6',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
@@ -102,6 +127,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#1e293b',
+  },
+  highlight: {
+    backgroundColor: '#fde68a',
+    color: '#0f172a',
+    borderRadius: 4,
   },
   email: {
     fontSize: 13,

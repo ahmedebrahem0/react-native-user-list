@@ -1,8 +1,10 @@
 import { useEffect, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { fetchUsers } from '../store/usersSlice';
+import { fetchUsers, resetUsers } from '../store/usersSlice';
 import {
   selectLoading,
+  selectRefreshing,
+  selectRetrying,
   selectError,
   selectHasMore,
   selectPage,
@@ -11,26 +13,39 @@ import {
 export const useUsers = () => {
   const dispatch = useAppDispatch();
   const loading = useAppSelector(selectLoading);
+  const refreshing = useAppSelector(selectRefreshing);
+  const retrying = useAppSelector(selectRetrying);
   const error = useAppSelector(selectError);
   const hasMore = useAppSelector(selectHasMore);
   const page = useAppSelector(selectPage);
 
-  // أول fetch لما الـ app يفتح
   useEffect(() => {
-    dispatch(fetchUsers(1));
+    dispatch(fetchUsers({ page: 1 }));
   }, [dispatch]);
 
-  // Load More
   const handleLoadMore = useCallback(() => {
-    if (!loading && hasMore) {
-      dispatch(fetchUsers(page));
+    if (!loading && !refreshing && hasMore) {
+      dispatch(fetchUsers({ page }));
     }
-  }, [dispatch, loading, hasMore, page]);
+  }, [dispatch, hasMore, loading, page, refreshing]);
+
+  const handleRefresh = useCallback(() => {
+    dispatch(resetUsers());
+    dispatch(fetchUsers({ page: 1, forceRefresh: true }));
+  }, [dispatch]);
+
+  const handleRetry = useCallback(() => {
+    dispatch(fetchUsers({ page: 1 }));
+  }, [dispatch]);
 
   return {
     loading,
+    refreshing,
+    retrying,
     error,
     hasMore,
     handleLoadMore,
+    handleRefresh,
+    handleRetry,
   };
 };

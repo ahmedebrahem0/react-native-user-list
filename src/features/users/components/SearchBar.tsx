@@ -3,7 +3,6 @@ import {
   View,
   TextInput,
   StyleSheet,
-  AccessibilityInfo,
 } from 'react-native';
 import { useSearch } from '../hooks/useSearch';
 

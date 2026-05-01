@@ -1,45 +1,74 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
-import type { User, UsersState } from '../types';
+import type { RootState } from '../../../store/store';
+import type { SortBy, TransformedUser, User, UsersState } from '../types';
+import { USERS_API_URL } from '../../../config/env';
 import { transformUsers } from '../../../utils/transformUser';
-import { loadFromStorage, saveToStorage } from '../../../utils/asyncStorage';
+import {
+  loadValidCache,
+  removeFromStorage,
+  saveCacheWithTimestamp,
+} from '../../../utils/asyncStorage';
 
 const USERS_CACHE_KEY = 'cached_users';
-const API_URL = 'https://jsonplaceholder.typicode.com/users';
 const PAGE_SIZE = 4;
 
-// Thunk — fetch من API أو من Cache
-export const fetchUsers = createAsyncThunk(
+interface FetchUsersArgs {
+  page: number;
+  forceRefresh?: boolean;
+}
+
+interface FetchUsersPayload {
+  users: TransformedUser[];
+  fromCache: boolean;
+}
+
+export const fetchUsers = createAsyncThunk<
+  FetchUsersPayload,
+  FetchUsersArgs,
+  { rejectValue: string; state: RootState }
+>(
   'users/fetchUsers',
-  async (page: number, { rejectWithValue }) => {
+  async ({ page, forceRefresh = false }, { getState, rejectWithValue }) => {
     try {
-      // أول حاجة نجرب الـ cache
-      if (page === 1) {
-        const cached = await loadFromStorage<ReturnType<typeof transformUsers>>(USERS_CACHE_KEY);
-        if (cached && cached.length > 0) {
-          return { users: cached, fromCache: true };
+      if (page === 1 && forceRefresh) {
+        await removeFromStorage(USERS_CACHE_KEY);
+      }
+
+      if (page === 1 && !forceRefresh) {
+        const cached = await loadValidCache<TransformedUser[]>(USERS_CACHE_KEY);
+        if (cached && cached.data.length > 0) {
+          return { users: cached.data, fromCache: true };
         }
       }
 
-      const response = await fetch(`${API_URL}?_page=${page}&_limit=${PAGE_SIZE}`);
+      const response = await fetch(`${USERS_API_URL}?_page=${page}&_limit=${PAGE_SIZE}`);
 
-      if (!response.ok) throw new Error('Failed to fetch users');
+      if (!response.ok) {
+        throw new Error('Failed to fetch users');
+      }
 
       const data: User[] = await response.json();
       const transformed = transformUsers(data);
 
-      // نحفظ في الـ cache لو page 1
-      if (page === 1) {
-        await saveToStorage(USERS_CACHE_KEY, transformed);
-      }
+      const existingUsers =
+        page === 1 ? [] : getState().users.users;
+      const mergedUsers =
+        page === 1
+          ? transformed
+          : [...existingUsers, ...transformed.filter((user) =>
+              !existingUsers.some((existingUser) => existingUser.id === user.id)
+            )];
+
+      await saveCacheWithTimestamp(USERS_CACHE_KEY, mergedUsers);
 
       return { users: transformed, fromCache: false };
-    } catch (error) {
-      // لو فشل الـ fetch، نرجع الـ cache
-      const cached = await loadFromStorage<ReturnType<typeof transformUsers>>(USERS_CACHE_KEY);
-      if (cached && cached.length > 0) {
-        return { users: cached, fromCache: true };
+    } catch {
+      const cached = await loadValidCache<TransformedUser[]>(USERS_CACHE_KEY);
+      if (page === 1 && !forceRefresh && cached && cached.data.length > 0) {
+        return { users: cached.data, fromCache: true };
       }
-      return rejectWithValue('Failed to fetch users and no cache available');
+
+      return rejectWithValue('Failed to fetch users and no valid cache is available.');
     }
   }
 );
@@ -47,10 +76,13 @@ export const fetchUsers = createAsyncThunk(
 const initialState: UsersState = {
   users: [],
   loading: false,
+  refreshing: false,
+  retrying: false,
   error: null,
   searchQuery: '',
   page: 1,
   hasMore: true,
+  sortBy: 'id',
 };
 
 const usersSlice = createSlice({
@@ -60,41 +92,64 @@ const usersSlice = createSlice({
     setSearchQuery: (state, action: PayloadAction<string>) => {
       state.searchQuery = action.payload;
     },
+    setSortBy: (state, action: PayloadAction<SortBy>) => {
+      state.sortBy = action.payload;
+    },
     resetUsers: (state) => {
       state.users = [];
       state.page = 1;
       state.hasMore = true;
       state.error = null;
+      state.loading = false;
+      state.refreshing = false;
+      state.retrying = false;
     },
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchUsers.pending, (state) => {
+      .addCase(fetchUsers.pending, (state, action) => {
+        const { forceRefresh = false } = action.meta.arg;
         state.loading = true;
-        state.error = null;
+        state.refreshing = forceRefresh;
+        state.retrying = !forceRefresh && state.users.length === 0 && state.error !== null;
+        if (!state.retrying) {
+          state.error = null;
+        }
       })
       .addCase(fetchUsers.fulfilled, (state, action) => {
         state.loading = false;
+        state.refreshing = false;
+        state.retrying = false;
+        state.error = null;
+
         const { users, fromCache } = action.payload;
 
         if (fromCache) {
           state.users = users;
-          state.hasMore = false;
-        } else {
-          // نضيف الـ users الجدد للـ existing list
-          const existingIds = new Set(state.users.map(u => u.id));
-          const newUsers = users.filter(u => !existingIds.has(u.id));
-          state.users = [...state.users, ...newUsers];
-          state.hasMore = users.length === PAGE_SIZE;
-          state.page += 1;
+          state.page = Math.floor(users.length / PAGE_SIZE) + 1;
+          state.hasMore = users.length > 0 && users.length % PAGE_SIZE === 0;
+          return;
         }
+
+        if (action.meta.arg.page === 1) {
+          state.users = users;
+        } else {
+          const existingIds = new Set(state.users.map((user) => user.id));
+          const newUsers = users.filter((user) => !existingIds.has(user.id));
+          state.users = [...state.users, ...newUsers];
+        }
+
+        state.hasMore = users.length === PAGE_SIZE;
+        state.page = action.meta.arg.page + 1;
       })
       .addCase(fetchUsers.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.refreshing = false;
+        state.retrying = false;
+        state.error = action.payload ?? 'Failed to fetch users.';
       });
   },
 });
 
-export const { setSearchQuery, resetUsers } = usersSlice.actions;
+export const { setSearchQuery, setSortBy, resetUsers } = usersSlice.actions;
 export default usersSlice.reducer;
